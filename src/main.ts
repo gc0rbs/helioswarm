@@ -15,6 +15,7 @@ import { decodePending, learnTokenAccounts, TokenAccountIndex } from "./stream/p
 import { SignalEngine } from "./stream/signals";
 import { balanceLamports, distribute, ensureFundingWallet, fundingNeeded, LAMPORTS, planTopups, sweep, waitForDeposit } from "./funding";
 import { PrettyWatch } from "./pretty";
+import { prettyRunLine } from "./pretty-run";
 import { expandGroups, loadRoster } from "./roster";
 import { Swarm } from "./swarm";
 import { JupiterVenue, PaperVenue } from "./venues";
@@ -29,12 +30,19 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+/** With JUPITER_API_KEY set, Jupiter calls go to api.jup.ag with the key (higher rate limits than lite-api). */
+const JUP_KEY = process.env.JUPITER_API_KEY;
+const jupFetch: typeof fetch = JUP_KEY
+  ? (input, init = {}) => fetch(input, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "x-api-key": JUP_KEY } })
+  : fetch;
+const jupUrl = (u?: string) => (JUP_KEY ? "https://api.jup.ag" : (u ?? "https://lite-api.jup.ag"));
+
 function feedFor(cfg: SwarmConfig): PriceFeed {
   switch (cfg.feed.kind) {
     case "helioswarm":
       return new HelioSwarmFeed(cfg.feed.engineUrl!);
     case "jupiter":
-      return new JupiterFeed(cfg.feed.jupiterUrl ?? cfg.live.jupiterUrl);
+      return new JupiterFeed(jupUrl(cfg.feed.jupiterUrl ?? cfg.live.jupiterUrl), jupFetch);
     default:
       return new SimFeed(cfg.feed.seed ?? 1);
   }
@@ -211,11 +219,13 @@ async function main() {
   }
 
   const liveFeed = cfg.stream ? new LiveFeed(feedFor(cfg)) : null;
+  const runSymbols = new Map(specs.flatMap((s) => s.targets.map((t) => [t.mint, t.symbol ?? ""] as const)).filter(([, sym]) => sym));
   const swarm = new Swarm(cfg, specs, {
+    emit: process.argv.includes("--json") ? undefined : prettyRunLine(runSymbols),
     feed: liveFeed ?? feedFor(cfg),
     venue: (ledger) =>
       live
-        ? new JupiterVenue({ ledger, rpcUrl: cfg.live.rpcUrl!, jupiterUrl: cfg.live.jupiterUrl, slippageBps: cfg.risk.slippageBps, wallets })
+        ? new JupiterVenue({ ledger, rpcUrl: cfg.live.rpcUrl!, jupiterUrl: jupUrl(cfg.live.jupiterUrl), slippageBps: cfg.risk.slippageBps, wallets, fetcher: jupFetch })
         : new PaperVenue(ledger, cfg.risk.slippageBps, cfg.risk.feeBps),
   });
   if (live) {

@@ -180,3 +180,5 @@ Without `SWARM_LIVE=1` a live config runs on paper and says so.
 - Holder books start from the RPC snapshot (top 20) and only learn cost basis from trades seen live, so profit-based risk builds up while the stream runs.
 - The swarm keeps its books in memory, so a restart starts every agent fresh (positions in a live wallet stay put; sell them by hand or with a new run's agents).
 - Trading HelioSwarm coins live still goes through the engine's own runtime (`ENGINE_ROLE=runtime`); here the `helioswarm` feed is for paper runs, and graduated coins can be traded live through Jupiter.
+
+Set `JUPITER_API_KEY` (free at portal.jup.ag) in `.env` to send Jupiter calls to api.jup.ag with your key instead of the rate-limited lite-api.
