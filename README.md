@@ -168,7 +168,7 @@ When a live run starts, each agent's spendable cash is the lower of its `bankrol
 
 ## Going live
 
-1. `pnpm start -- --config swarm.json --wallets`, then send each listed address its bankroll plus the fee reserve.
+1. `pnpm start --config swarm.json --wallets` lists the agent wallets and one funding wallet. Send SOL to the funding wallet, then `pnpm start --config swarm.json --fund` (or `--fund --wait`) gives each agent its bankroll plus the fee reserve in one transaction. `--sweep` sends agents' SOL back to the funding wallet.
 2. Set `"mode": "live"` and a tight `risk.maxSwarmSpendSol`.
 3. `SWARM_LIVE=1 SOLANA_RPC_URL=... pnpm start -- --config swarm.json`
 

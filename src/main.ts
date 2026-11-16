@@ -13,6 +13,7 @@ import { snapshotHolders } from "./stream/holders";
 import { parseTx } from "./stream/parse";
 import { decodePending, learnTokenAccounts, TokenAccountIndex } from "./stream/pending";
 import { SignalEngine } from "./stream/signals";
+import { balanceLamports, distribute, ensureFundingWallet, fundingNeeded, LAMPORTS, planTopups, sweep, waitForDeposit } from "./funding";
 import { PrettyWatch } from "./pretty";
 import { expandGroups, loadRoster } from "./roster";
 import { Swarm } from "./swarm";
@@ -118,6 +119,42 @@ async function main() {
   const walletsDir = resolve(dirname(path), cfg.walletsDir);
   const rpcUrl = cfg.live.rpcUrl ?? process.env.SOLANA_RPC_URL;
 
+  if (process.argv.includes("--fund") || process.argv.includes("--sweep")) {
+    if (!rpcUrl) throw new Error("--fund and --sweep need SOLANA_RPC_URL (or live.rpcUrl in the config)");
+    const ids = specs.map((s) => s.id);
+    ensureWallets(walletsDir, ids);
+    const wallets = await loadWallets(walletsDir, ids);
+    const { signer: funder } = await ensureFundingWallet(walletsDir);
+    const fmt = (l: bigint) => `${(Number(l) / LAMPORTS).toFixed(4)} SOL`;
+    if (process.argv.includes("--sweep")) {
+      const done = await sweep(rpcUrl, wallets, funder.address);
+      for (const d of done) console.log(`${d.id.padEnd(24)} sent ${fmt(d.lamports)} back   ${d.sig}`);
+      console.log(done.length ? `Swept to the funding wallet ${funder.address}: now ${fmt(await balanceLamports(rpcUrl, funder.address))}. Tokens the agents still hold were not moved.` : "Nothing to sweep: every agent wallet is empty.");
+      return;
+    }
+    const balances = await solBalances(rpcUrl, wallets);
+    const topups = planTopups(specs.map((s) => ({ id: s.id, address: wallets.get(s.id)!.address, targetSol: s.bankrollSol + cfg.feeReserveSol, balanceSol: balances.get(s.id)! })));
+    if (!topups.length) return console.log("Every agent wallet already holds its bankroll plus the fee reserve. Nothing to send.");
+    const need = fundingNeeded(topups);
+    console.log(`Funding wallet: ${funder.address}`);
+    for (const t of topups) console.log(`  ${t.id.padEnd(24)} needs ${fmt(t.lamports)}`);
+    let have = await balanceLamports(rpcUrl, funder.address);
+    if (have < need) {
+      if (!process.argv.includes("--wait")) {
+        console.log(`It holds ${fmt(have)} and needs ${fmt(need)} (including fees). Send ${fmt(need - have)} to ${funder.address}, then run --fund again, or run --fund --wait to send automatically when it arrives.`);
+        return;
+      }
+      console.log(`Waiting for ${fmt(need - have)} more at ${funder.address} ... (Ctrl+C to cancel)`);
+      have = await waitForDeposit(rpcUrl, funder.address, need, (h) => process.stdout.write(`\r  holds ${fmt(h)} of ${fmt(need)}   `));
+      console.log("");
+    }
+    const sigs = await distribute(rpcUrl, funder, topups);
+    console.log(`Sent ${fmt(need)} to ${topups.length} agents in ${sigs.length} transaction${sigs.length > 1 ? "s" : ""}:`);
+    for (const sig of sigs) console.log(`  https://solscan.io/tx/${sig}`);
+    console.log(`Funding wallet left with ${fmt(await balanceLamports(rpcUrl, funder.address))}.`);
+    return;
+  }
+
   if (process.argv.includes("--wallets")) {
     const ids = specs.map((s) => s.id);
     const created = ensureWallets(walletsDir, ids);
@@ -128,8 +165,11 @@ async function main() {
       const bal = balances ? `${balances.get(s.id)!.toFixed(4).padStart(10)} SOL` : "";
       console.log(`${s.id.padEnd(24)} ${wallets.get(s.id)!.address.padEnd(44)} bankroll ${String(s.bankrollSol).padStart(6)} ${bal}${created.includes(s.id) ? "  new" : ""}`);
     }
+    const { signer: funder, created: fNew } = await ensureFundingWallet(walletsDir);
+    const fBal = rpcUrl ? `${(Number(await balanceLamports(rpcUrl, funder.address)) / LAMPORTS).toFixed(4).padStart(10)} SOL` : "";
+    console.log(`${"funding wallet".padEnd(24)} ${funder.address.padEnd(44)} ${" ".repeat(15)}${fBal}${fNew ? "  new" : ""}`);
     if (!balances) console.log("Set SOLANA_RPC_URL to see balances.");
-    console.log(`Fund each wallet with its bankroll plus ${cfg.feeReserveSol} SOL for fees. Back up ${tilde(walletsDir)}: it holds the private keys.`);
+    console.log(`Send SOL to the funding wallet, then run --fund to give each agent its bankroll plus ${cfg.feeReserveSol} SOL for fees (--fund --wait sends as soon as it arrives). Back up ${tilde(walletsDir)}: it holds the private keys.`);
     return;
   }
 
