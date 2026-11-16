@@ -14,6 +14,7 @@ import { parseTx } from "./stream/parse";
 import { decodePending, learnTokenAccounts, TokenAccountIndex } from "./stream/pending";
 import { SignalEngine } from "./stream/signals";
 import { balanceLamports, distribute, ensureFundingWallet, fundingNeeded, LAMPORTS, planTopups, sweep, waitForDeposit } from "./funding";
+import { Dashboard } from "./dashboard";
 import { PrettyWatch } from "./pretty";
 import { prettyRunLine } from "./pretty-run";
 import { expandGroups, loadRoster } from "./roster";
@@ -36,6 +37,14 @@ const jupFetch: typeof fetch = JUP_KEY
   ? (input, init = {}) => fetch(input, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "x-api-key": JUP_KEY } })
   : fetch;
 const jupUrl = (u?: string) => (JUP_KEY ? "https://api.jup.ag" : (u ?? "https://lite-api.jup.ag"));
+
+/** --dashboard [port]: serve the live demo page (default port 4545). */
+function dashboardPort(): number | null {
+  const i = process.argv.indexOf("--dashboard");
+  if (i < 0) return null;
+  const n = Number(process.argv[i + 1]);
+  return Number.isInteger(n) && n > 0 ? n : 4545;
+}
 
 function feedFor(cfg: SwarmConfig): PriceFeed {
   switch (cfg.feed.kind) {
@@ -192,10 +201,37 @@ async function main() {
       let engine: SignalEngine | undefined;
       const top = Number(arg("top") ?? 0);
       if (!Number.isInteger(top) || top < 0) throw new Error("--top must be a whole number, e.g. --top 10");
-      const view = new PrettyWatch(symbols, (m) => engine?.books.get(m)?.decimals ?? 6, top);
+      // --agents: only your agent wallets, read straight from the chain (works while a live run trades elsewhere).
+      const onlyAgents = process.argv.includes("--agents");
+      const agentWallets = onlyAgents ? await loadWallets(walletsDir, specs.map((s) => s.id)) : new Map<string, KeyPairSigner>();
+      const byAddress = new Map([...agentWallets].map(([id, w]) => [w.address as string, id]));
+      const view = new PrettyWatch(symbols, (m) => engine?.books.get(m)?.decimals ?? 6, top, onlyAgents ? byAddress : undefined);
       view.header(mints);
-      const stopStream = await startStream(cfg, mints, rpcUrl, (s) => view.signal(s), { onFlow: (l) => view.event(l), onStatus: (m) => view.status(m), onEngine: (e) => (engine = e) });
-      stop = () => (stopStream(), view.stop());
+      const port = dashboardPort();
+      const dash = port
+        ? new Dashboard({ title: "HelioSwarm", mode: onlyAgents ? "live" : "watch", tokens: mints.map((m) => ({ mint: m, symbol: symbols.get(m) ?? "" })), agents: onlyAgents ? specs.map((s) => ({ id: s.id, preset: s.preset, wallet: agentWallets.get(s.id)!.address, bankrollSol: s.bankrollSol })) : [] }, port)
+        : null;
+      if (onlyAgents && rpcUrl) {
+        const bal = await solBalances(rpcUrl, agentWallets);
+        for (const s of specs) {
+          const b = bal.get(s.id) ?? 0;
+          view.status(`${s.id.padEnd(14)} ${agentWallets.get(s.id)!.address}  ${b.toFixed(4)} SOL`);
+          dash?.push({ event: "wallet", agent: s.id, address: agentWallets.get(s.id)!.address, balanceSol: b, tradableSol: b });
+        }
+      }
+      const stopStream = await startStream(cfg, mints, rpcUrl, (s) => (view.signal(s), dash?.push({ event: "signal", ...s })), {
+        onFlow: (l) => {
+          view.event(l);
+          if (!dash) return;
+          const agent = byAddress.get(String(l.owner));
+          // Our agents' on-chain trades become fills so the dashboard cards update.
+          if (agent && (l.kind === "buy" || l.kind === "sell")) dash.push({ event: "fill", agent, side: l.kind, mint: l.mint, sol: l.sol, tokens: l.tokens, priceSol: l.priceSol, sig: l.sig, reason: "on-chain" });
+          dash.push(l);
+        },
+        onStatus: (m) => view.status(m),
+        onEngine: (e) => (engine = e),
+      });
+      stop = () => (stopStream(), view.stop(), dash?.close());
     }
     await new Promise<void>((done) => {
       process.once("SIGINT", done);
@@ -220,8 +256,13 @@ async function main() {
 
   const liveFeed = cfg.stream ? new LiveFeed(feedFor(cfg)) : null;
   const runSymbols = new Map(specs.flatMap((s) => s.targets.map((t) => [t.mint, t.symbol ?? ""] as const)).filter(([, sym]) => sym));
+  const port = dashboardPort();
+  const dash = port
+    ? new Dashboard({ title: "HelioSwarm", mode: live ? "live" : "paper", tokens: [...new Set(specs.flatMap((s) => s.targets.map((t) => t.mint)))].map((m) => ({ mint: m, symbol: runSymbols.get(m) ?? "" })), agents: specs.map((s) => ({ id: s.id, preset: s.preset, wallet: wallets.get(s.id)?.address, bankrollSol: s.bankrollSol })) }, port)
+    : null;
+  const print = process.argv.includes("--json") ? (l: Record<string, unknown>) => console.log(JSON.stringify(l)) : prettyRunLine(runSymbols);
   const swarm = new Swarm(cfg, specs, {
-    emit: process.argv.includes("--json") ? undefined : prettyRunLine(runSymbols),
+    emit: (l) => (print(l), dash?.push(l)),
     feed: liveFeed ?? feedFor(cfg),
     venue: (ledger) =>
       live
@@ -243,13 +284,17 @@ async function main() {
   let stopStream = () => {};
   if (cfg.stream) {
     const ourWallets = new Set([...wallets.values()].map((w) => w.address as string));
-    stopStream = await startStream(cfg, swarm.mints, rpcUrl, (s) => swarm.board.post(s), { ourWallets, feed: liveFeed!, onFlow: process.env.SWARM_LOG_FLOWS === "1" ? (l) => swarm.log("flow", l) : undefined });
+    stopStream = await startStream(cfg, swarm.mints, rpcUrl, (s) => swarm.board.post(s), { ourWallets, feed: liveFeed!, onFlow: (l) => {
+        if (process.env.SWARM_LOG_FLOWS === "1") swarm.log("flow", l);
+        else dash?.push(l);
+      } });
   }
   process.once("SIGINT", () => swarm.stop("SIGINT"));
   process.once("SIGTERM", () => swarm.stop("SIGTERM"));
   const ticks = arg("ticks");
   await swarm.run(ticks ? Number(ticks) : undefined);
   stopStream();
+  dash?.close();
 }
 
 main().catch((e) => {

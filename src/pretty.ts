@@ -50,13 +50,15 @@ export class PrettyWatch {
   private wallets = new Map<string, { bought: number; sold: number; boughtTokens: number; soldTokens: number; buys: number; sells: number }>();
 
   /** topN: only show trades from the N wallets that have bought the most SOL so far (0 = show all). */
-  constructor(private symbols: Map<string, string>, private decimals: (mint: string) => number, private topN = 0) {
+  /** agents: wallet address -> agent name. When set, only those wallets are shown, labeled by name. */
+  constructor(private symbols: Map<string, string>, private decimals: (mint: string) => number, private topN = 0, private agents?: Map<string, string>) {
     this.timer = setInterval(() => this.summary(), 30_000);
     this.timer.unref();
   }
 
   header(mints: string[]) {
     console.log("");
+    if (this.agents) console.log(yellow(`Showing only your ${this.agents.size} agent wallets, straight from the chain.`));
     if (this.topN) console.log(yellow(`Showing only the top ${this.topN} buyers by SOL spent since the watch started (leaderboard every 30s).`));
     for (const m of mints) console.log(`${bold("Watching")} ${bold(cyan(this.symbols.get(m) ?? short(m)))}  ${dim(m)}`);
     console.log(dim(`${green("BUY")}/${red("SELL")} = executed trade   ${yellow("⏳")} = incoming, not executed yet   ⚡ = how early we saw it   Ctrl+C to stop`));
@@ -67,7 +69,13 @@ export class PrettyWatch {
     return [...this.wallets].filter(([, w]) => w.bought > 0).sort((a, b) => b[1].bought - a[1].bought).slice(0, this.topN || 10);
   }
 
+  private who(owner: string) {
+    const name = this.agents?.get(owner);
+    return name ? bold(cyan(pad(name, 14))) : dim(short(owner));
+  }
+
   private shown(owner: string): boolean {
+    if (this.agents) return this.agents.has(owner);
     if (!this.topN) return true;
     return this.topBuyers().some(([w]) => w === owner);
   }
@@ -88,6 +96,7 @@ export class PrettyWatch {
         const isBuy = kind === "buy";
         const solAmt = Number(l.sol);
         const sig = String(l.sig);
+        if (this.agents && !this.agents.has(String(l.owner))) return;
         this.stats.executed.add(sig);
         this.landed.add(sig);
         if (this.landed.size > 5_000) this.landed.delete(this.landed.values().next().value!);
@@ -105,12 +114,12 @@ export class PrettyWatch {
         const tag = isBuy ? green(bold(pad("BUY", 5))) : red(bold(pad("SELL", 5)));
         const amt = isBuy ? green(pad(sol(solAmt), 12)) : red(pad(sol(solAmt), 12));
         const lead = early != null && early >= 0 ? cyan(`⚡ ${early}ms early`) : "";
-        console.log(`${time()}  ${tag} ${amt} ${pad(`${num(tokens)} ${this.sym(l.mint)}`, 18)} ${dim(short(String(l.owner)))}  ${lead}`);
+        console.log(`${time()}  ${tag} ${amt} ${pad(`${num(tokens)} ${this.sym(l.mint)}`, 18)} ${this.who(String(l.owner))}  ${lead}`);
         return;
       }
       // Transfers: print the sending side once (the receiving side is the same transfer).
       if (kind === "transfer_out" && this.shown(String(l.owner))) {
-        console.log(`${time()}  ${dim(pad("MOVE", 5))} ${pad(`${num(tokens)} ${this.sym(l.mint)}`, 31)} ${dim(`${short(String(l.owner))} → ${short(l.counterparty as string | undefined)}`)}`);
+        console.log(`${time()}  ${dim(pad("MOVE", 5))} ${pad(`${num(tokens)} ${this.sym(l.mint)}`, 31)} ${this.who(String(l.owner))} ${dim(`→ ${short(l.counterparty as string | undefined)}`)}`);
       }
       return;
     }
@@ -123,7 +132,7 @@ export class PrettyWatch {
       const amount = raw != null ? `${kind === "buy" ? "≥" : ""}${num(raw)} ${this.sym(l.mint)}` : `? ${this.sym(l.mint)}`;
       const label = kind === "sell" ? red("sell") : kind === "buy" ? green("buy") : kind === "move" ? "move" : dim("activity");
       const to = l.to ? dim(` → ${short(String(l.to))}`) : "";
-      console.log(`${time()}  ${yellow("⏳")} ${dim("incoming")} ${pad(label, 8)} ${pad(amount, 18)} ${dim(short(String(l.owner)))}${to}  ${dim(`(${l.venue})`)}`);
+      console.log(`${time()}  ${yellow("⏳")} ${dim("incoming")} ${pad(label, 8)} ${pad(amount, 18)} ${this.who(String(l.owner))}${to}  ${dim(`(${l.venue})`)}`);
     }
   }
 
