@@ -138,7 +138,7 @@ The swarm's own wallets never trigger signals.
 SVS_X_TOKEN=... SOLANA_RPC_URL=... pnpm start -- --config swarm.json --watch   # flows and signals only, no trading
 ```
 
-`--watch` (or `pnpm watch`) prints a readable live feed: each executed buy and sell with its size, incoming trades seen before they execute (⏳) and how early (⚡), signals as highlighted banners, and a summary every 30s. Add `--json` for raw JSON lines. Use it to check your token and tune thresholds before letting agents act on them. During a normal run, set `SWARM_LOG_FLOWS=1` to log flows too.
+`--watch` (or `pnpm watch`) prints a readable live feed: each executed buy and sell with its size, incoming trades seen before they execute (⏳) and how early (⚡), signals as highlighted banners, and a summary every 30s. Add `--top 10` to show only the 10 wallets that have bought the most SOL since the watch started, with a leaderboard every 30s. Add `--json` for raw JSON lines. Use it to check your token and tune thresholds before letting agents act on them. During a normal run, set `SWARM_LOG_FLOWS=1` to log flows too.
 
 ### Seeing sells before they execute (deshred)
 

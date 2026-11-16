@@ -46,16 +46,30 @@ export class PrettyWatch {
   private landed = new Set<string>();
   private timer: NodeJS.Timeout;
 
-  constructor(private symbols: Map<string, string>, private decimals: (mint: string) => number) {
+  /** Per-wallet totals since the watch started. */
+  private wallets = new Map<string, { bought: number; sold: number; boughtTokens: number; soldTokens: number; buys: number; sells: number }>();
+
+  /** topN: only show trades from the N wallets that have bought the most SOL so far (0 = show all). */
+  constructor(private symbols: Map<string, string>, private decimals: (mint: string) => number, private topN = 0) {
     this.timer = setInterval(() => this.summary(), 30_000);
     this.timer.unref();
   }
 
   header(mints: string[]) {
     console.log("");
+    if (this.topN) console.log(yellow(`Showing only the top ${this.topN} buyers by SOL spent since the watch started (leaderboard every 30s).`));
     for (const m of mints) console.log(`${bold("Watching")} ${bold(cyan(this.symbols.get(m) ?? short(m)))}  ${dim(m)}`);
     console.log(dim(`${green("BUY")}/${red("SELL")} = executed trade   ${yellow("⏳")} = incoming, not executed yet   ⚡ = how early we saw it   Ctrl+C to stop`));
     console.log("");
+  }
+
+  private topBuyers(): [string, { bought: number; sold: number; boughtTokens: number; soldTokens: number; buys: number; sells: number }][] {
+    return [...this.wallets].filter(([, w]) => w.bought > 0).sort((a, b) => b[1].bought - a[1].bought).slice(0, this.topN || 10);
+  }
+
+  private shown(owner: string): boolean {
+    if (!this.topN) return true;
+    return this.topBuyers().some(([w]) => w === owner);
   }
 
   status(msg: string) {
@@ -80,6 +94,12 @@ export class PrettyWatch {
         if (isBuy) (this.stats.buys++, (this.stats.buySol += solAmt));
         else (this.stats.sells++, (this.stats.sellSol += solAmt));
         if (l.priceSol) this.lastPrice.set(String(l.mint), Number(l.priceSol));
+        const owner = String(l.owner);
+        const w = this.wallets.get(owner) ?? { bought: 0, sold: 0, boughtTokens: 0, soldTokens: 0, buys: 0, sells: 0 };
+        if (isBuy) (w.bought += solAmt, w.boughtTokens += tokens, w.buys++);
+        else (w.sold += solAmt, w.soldTokens += tokens, w.sells++);
+        this.wallets.set(owner, w);
+        if (!this.shown(owner)) return;
         const early = l.seenEarlyMs != null ? Number(l.seenEarlyMs) : undefined;
         if (early != null && early >= 0) this.stats.early.push(early);
         const tag = isBuy ? green(bold(pad("BUY", 5))) : red(bold(pad("SELL", 5)));
@@ -89,7 +109,7 @@ export class PrettyWatch {
         return;
       }
       // Transfers: print the sending side once (the receiving side is the same transfer).
-      if (kind === "transfer_out") {
+      if (kind === "transfer_out" && this.shown(String(l.owner))) {
         console.log(`${time()}  ${dim(pad("MOVE", 5))} ${pad(`${num(tokens)} ${this.sym(l.mint)}`, 31)} ${dim(`${short(String(l.owner))} → ${short(l.counterparty as string | undefined)}`)}`);
       }
       return;
@@ -97,7 +117,7 @@ export class PrettyWatch {
     if (l.event === "pending") {
       // Router trades decode only as "activity" (direction unknown): the executed line follows
       // with its ⚡ timing, so skip them here. Also skip anything that already landed.
-      if (kind === "activity" || this.landed.has(String(l.sig))) return;
+      if (kind === "activity" || this.landed.has(String(l.sig)) || !this.shown(String(l.owner))) return;
       this.stats.pending++;
       const raw = l.amountRaw != null ? Number(BigInt(String(l.amountRaw))) / 10 ** this.decimals(String(l.mint)) : undefined;
       const amount = raw != null ? `${kind === "buy" ? "≥" : ""}${num(raw)} ${this.sym(l.mint)}` : `? ${this.sym(l.mint)}`;
@@ -130,6 +150,23 @@ export class PrettyWatch {
         dim(`  │  seen early ${caught}/${total}${median != null ? `, median ${median}ms` : ""}${price ? `  │  ${price}` : ""}`),
     );
     this.stats = { buys: 0, sells: 0, buySol: 0, sellSol: 0, executed: new Set(), early: [], pending: 0 };
+    if (this.topN) this.leaderboard();
+  }
+
+  leaderboard() {
+    const top = this.topBuyers();
+    if (!top.length) return;
+    console.log("");
+    console.log(bold(`Top ${top.length} buyers since start`) + dim("   (SOL bought / SOL sold / what they still hold)"));
+    top.forEach(([owner, w], i) => {
+      const held = w.boughtTokens > 0 ? Math.max(0, 1 - w.soldTokens / w.boughtTokens) : 0;
+      const pnl = w.sold - w.bought;
+      const holdTxt = held >= 0.999 ? green("holding all") : held <= 0.001 ? red(`sold all (${pnl >= 0 ? "+" : ""}${pnl.toFixed(4)} SOL)`) : yellow(`holding ${Math.round(held * 100)}%`);
+      console.log(
+        `  ${dim(String(i + 1).padStart(2))}. ${pad(owner, 45)} ${green(pad(sol(w.bought), 12))} ${red(pad(w.sold ? sol(w.sold) : "-", 12))} ${holdTxt}  ${dim(`${w.buys}b/${w.sells}s`)}`,
+      );
+    });
+    console.log("");
   }
 
   stop() {

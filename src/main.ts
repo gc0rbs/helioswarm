@@ -138,7 +138,9 @@ async function main() {
     } else {
       const symbols = new Map(specs.flatMap((s) => s.targets.map((t) => [t.mint, t.symbol ?? ""] as const)).filter(([, sym]) => sym));
       let engine: SignalEngine | undefined;
-      const view = new PrettyWatch(symbols, (m) => engine?.books.get(m)?.decimals ?? 6);
+      const top = Number(arg("top") ?? 0);
+      if (!Number.isInteger(top) || top < 0) throw new Error("--top must be a whole number, e.g. --top 10");
+      const view = new PrettyWatch(symbols, (m) => engine?.books.get(m)?.decimals ?? 6, top);
       view.header(mints);
       const stopStream = await startStream(cfg, mints, rpcUrl, (s) => view.signal(s), { onFlow: (l) => view.event(l), onStatus: (m) => view.status(m), onEngine: (e) => (engine = e) });
       stop = () => (stopStream(), view.stop());
