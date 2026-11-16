@@ -13,3 +13,4 @@ SWARM_STOP
 wallets/
 watch.out
 swarm.json.bak
+!deploy/swarm.json

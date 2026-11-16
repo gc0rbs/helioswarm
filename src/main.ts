@@ -2,6 +2,7 @@
 //      pnpm start -- --config swarm.json --wallets   (create missing agent wallets, list addresses and balances)
 //      pnpm start -- --config swarm.json --watch     (stream on-chain flows and signals only, no trading)
 //      pnpm start -- --roster        (list deployable roster agents)
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -43,7 +44,8 @@ function dashboardPort(): number | null {
   const i = process.argv.indexOf("--dashboard");
   if (i < 0) return null;
   const n = Number(process.argv[i + 1]);
-  return Number.isInteger(n) && n > 0 ? n : 4545;
+  if (Number.isInteger(n) && n > 0) return n;
+  return process.env.PORT ? Number(process.env.PORT) : 4545;
 }
 
 function feedFor(cfg: SwarmConfig): PriceFeed {
@@ -203,7 +205,18 @@ async function main() {
       if (!Number.isInteger(top) || top < 0) throw new Error("--top must be a whole number, e.g. --top 10");
       // --agents: only your agent wallets, read straight from the chain (works while a live run trades elsewhere).
       const onlyAgents = process.argv.includes("--agents");
-      const agentWallets = onlyAgents ? await loadWallets(walletsDir, specs.map((s) => s.id)) : new Map<string, KeyPairSigner>();
+      // Addresses come from the wallet files when they are here, otherwise from agents.json next to the
+      // config ({"agent id": "address"}), so a hosted dashboard needs no private keys.
+      const publicFile = resolve(dirname(path), "agents.json");
+      const agentWallets = new Map<string, { address: string }>();
+      if (onlyAgents) {
+        const ids = specs.map((s) => s.id);
+        if (ids.every((id) => existsSync(walletPath(walletsDir, id)))) for (const [id, w] of await loadWallets(walletsDir, ids)) agentWallets.set(id, { address: w.address });
+        else if (existsSync(publicFile)) for (const [id, a] of Object.entries(JSON.parse(readFileSync(publicFile, "utf8")) as Record<string, string>)) agentWallets.set(id, { address: a });
+        else throw new Error(`--agents needs the wallet files in ${tilde(walletsDir)} or an agents.json of public addresses next to the config`);
+        const missing = ids.filter((id) => !agentWallets.has(id));
+        if (missing.length) throw new Error(`no address for ${missing.join(", ")}`);
+      }
       const byAddress = new Map([...agentWallets].map(([id, w]) => [w.address as string, id]));
       const view = new PrettyWatch(symbols, (m) => engine?.books.get(m)?.decimals ?? 6, top, onlyAgents ? byAddress : undefined);
       view.header(mints);
@@ -212,7 +225,7 @@ async function main() {
         ? new Dashboard({ title: "HelioSwarm", mode: onlyAgents ? "live" : "watch", tokens: mints.map((m) => ({ mint: m, symbol: symbols.get(m) ?? "" })), agents: onlyAgents ? specs.map((s) => ({ id: s.id, preset: s.preset, wallet: agentWallets.get(s.id)!.address, bankrollSol: s.bankrollSol })) : [] }, port)
         : null;
       if (onlyAgents && rpcUrl) {
-        const bal = await solBalances(rpcUrl, agentWallets);
+        const bal = await solBalances(rpcUrl, agentWallets as unknown as Map<string, KeyPairSigner>);
         for (const s of specs) {
           const b = bal.get(s.id) ?? 0;
           view.status(`${s.id.padEnd(14)} ${agentWallets.get(s.id)!.address}  ${b.toFixed(4)} SOL`);

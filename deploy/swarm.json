@@ -1,0 +1,119 @@
+{
+  "mode": "paper",
+  "tickMs": 15000,
+  "feed": {
+    "kind": "jupiter"
+  },
+  "risk": {
+    "maxTxPerMin": 10,
+    "slippageBps": 300,
+    "feeBps": 100
+  },
+  "live": {
+    "jupiterUrl": "https://lite-api.jup.ag"
+  },
+  "logFile": "swarm.log.jsonl",
+  "feeReserveSol": 0.01,
+  "killFile": "SWARM_STOP",
+  "plugins": [],
+  "coordination": {
+    "noSelfTradeMs": 30000,
+    "exitOn": [
+      "whale_sell",
+      "holder_moved"
+    ],
+    "avoidOn": [
+      "whale_sell",
+      "holder_moved",
+      "sell_pressure"
+    ],
+    "followBuyPressure": false
+  },
+  "signals": {
+    "whaleSellPct": 1,
+    "holderMovedPct": 1,
+    "overhangPct": 15,
+    "buyPressureBuyers": 8,
+    "buyPressureSol": 5,
+    "windowSec": 120,
+    "ttlSec": 300
+  },
+  "groups": [
+    {
+      "roster": [
+        "0xsendit_kev",
+        "bagz4days_"
+      ],
+      "bankrollSol": 0.7733,
+      "targets": [
+        {
+          "mint": "5qCoiRAxPBWQ6P1DpEGFA8DWXAkn5QUUBRotubiWpump",
+          "symbol": "SWARM"
+        }
+      ],
+      "tasks": [
+        "trade",
+        "report"
+      ]
+    },
+    {
+      "preset": "sniper",
+      "count": 3,
+      "namePrefix": "sniper",
+      "bankrollSol": 0.3093,
+      "targets": [
+        {
+          "mint": "5qCoiRAxPBWQ6P1DpEGFA8DWXAkn5QUUBRotubiWpump",
+          "symbol": "SWARM"
+        }
+      ],
+      "tasks": [
+        "trade",
+        "watch",
+        "report"
+      ],
+      "rules": {
+        "takeProfitPct": 15,
+        "stopLossPct": 8,
+        "maxCoins": 1
+      },
+      "taskOptions": {
+        "watch": {
+          "alertPct": 5
+        }
+      }
+    },
+    {
+      "preset": "holder",
+      "count": 1,
+      "bankrollSol": 0.464,
+      "brain": "claude",
+      "targets": [
+        {
+          "mint": "5qCoiRAxPBWQ6P1DpEGFA8DWXAkn5QUUBRotubiWpump",
+          "symbol": "SWARM"
+        }
+      ],
+      "tasks": [
+        "trade",
+        "watch",
+        "report"
+      ],
+      "rules": {},
+      "taskOptions": {
+        "watch": {
+          "alertPct": 3
+        }
+      }
+    }
+  ],
+  "stream": {
+    "endpoint": "https://basic.grpc.solanavibestation.com",
+    "tokenEnv": "SVS_X_TOKEN",
+    "accounts": [],
+    "commitment": "processed",
+    "snapshot": true,
+    "deshred": true,
+    "deshredHolders": 50
+  }
+}

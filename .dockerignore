@@ -1,0 +1,6 @@
+node_modules
+wallets
+.env
+swarm.json
+swarm.log.jsonl
+*.bak
