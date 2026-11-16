@@ -12,6 +12,7 @@ import { snapshotHolders } from "./stream/holders";
 import { parseTx } from "./stream/parse";
 import { decodePending, learnTokenAccounts, TokenAccountIndex } from "./stream/pending";
 import { SignalEngine } from "./stream/signals";
+import { PrettyWatch } from "./pretty";
 import { expandGroups, loadRoster } from "./roster";
 import { Swarm } from "./swarm";
 import { JupiterVenue, PaperVenue } from "./venues";
@@ -40,24 +41,26 @@ async function startStream(
   mints: string[],
   rpcUrl: string | undefined,
   post: (s: Signal) => void,
-  opts: { ourWallets?: Set<string>; onFlow?: (line: Record<string, unknown>) => void; feed?: LiveFeed } = {},
+  opts: { ourWallets?: Set<string>; onFlow?: (line: Record<string, unknown>) => void; feed?: LiveFeed; onStatus?: (msg: string) => void; onEngine?: (e: SignalEngine) => void } = {},
 ): Promise<() => void> {
   const sc = cfg.stream!;
   const engine = new SignalEngine(mints, post, cfg.signals, opts.ourWallets);
   const index = new TokenAccountIndex();
+  opts.onEngine?.(engine);
+  const say = opts.onStatus ?? ((m: string) => console.warn(`[stream] ${m}`));
   if (sc.snapshot) {
-    if (!rpcUrl) console.warn("[stream] no SOLANA_RPC_URL: skipping the holder snapshot, shares use tracked balances until supply is known.");
+    if (!rpcUrl) say("no SOLANA_RPC_URL: skipping the holder snapshot, shares use tracked balances until supply is known.");
     else
       for (const book of engine.books.values()) {
-        await snapshotHolders(rpcUrl, book, Date.now(), index).catch((e) => console.warn(`[stream] snapshot ${book.mint}: ${(e as Error).message}`));
-        console.warn(`[stream] ${book.mint}: supply ${book.supplyRaw ?? "?"}, ${book.holders.size} top holders loaded`);
+        await snapshotHolders(rpcUrl, book, Date.now(), index).catch((e) => say(`holder snapshot for ${book.mint} failed: ${(e as Error).message.trim()}`));
+        say(`${book.mint}: supply ${book.supplyRaw != null ? (Number(book.supplyRaw) / 10 ** book.decimals).toLocaleString() : "?"}, ${book.holders.size} top holders loaded`);
       }
   }
   const { SvsStream, DeshredStream } = await import("./stream/svs");
   const stream = new SvsStream(sc, mints);
   const targets = new Set(mints);
-  stream.on("status", (m: string) => console.warn(`[stream] ${m}`));
-  stream.on("error", (e: Error) => console.warn(`[stream] error: ${e.message}`));
+  stream.on("status", (m: string) => say(m));
+  stream.on("error", (e: Error) => say(`error: ${e.message}`));
   stream.on("tx", (tx) => {
     learnTokenAccounts(tx, targets, index);
     const parsed = parseTx(tx, targets);
@@ -81,8 +84,8 @@ async function startStream(
       return [...mints, ...wallets, ...accs].slice(0, 1_000);
     };
     deshred = new DeshredStream(sc, filter());
-    deshred.on("status", (m: string) => console.warn(`[stream] ${m}`));
-    deshred.on("error", (e: Error) => console.warn(`[stream] error: ${e.message}`));
+    deshred.on("status", (m: string) => say(m));
+    deshred.on("error", (e: Error) => say(`error: ${e.message}`));
     deshred.on("pending", (tx) => {
       const intents = decodePending(tx, targets, index);
       for (const i of intents) opts.onFlow?.({ ts: new Date(i.ts).toISOString(), event: "pending", kind: i.kind, mint: i.mint, owner: i.owner, venue: i.venue, amountRaw: i.amountRaw?.toString(), to: i.to, sig: i.signature });
@@ -129,7 +132,17 @@ async function main() {
   if (process.argv.includes("--watch")) {
     if (!cfg.stream) throw new Error('--watch needs a "stream" section in the config');
     const mints = [...new Set(specs.flatMap((s) => s.targets.map((t) => t.mint)))];
-    const stop = await startStream(cfg, mints, rpcUrl, (s) => console.log(JSON.stringify({ event: "signal", ...s, ts: new Date(s.ts).toISOString() })), { onFlow: (l) => console.log(JSON.stringify(l)) });
+    let stop: () => void;
+    if (process.argv.includes("--json")) {
+      stop = await startStream(cfg, mints, rpcUrl, (s) => console.log(JSON.stringify({ event: "signal", ...s, ts: new Date(s.ts).toISOString() })), { onFlow: (l) => console.log(JSON.stringify(l)) });
+    } else {
+      const symbols = new Map(specs.flatMap((s) => s.targets.map((t) => [t.mint, t.symbol ?? ""] as const)).filter(([, sym]) => sym));
+      let engine: SignalEngine | undefined;
+      const view = new PrettyWatch(symbols, (m) => engine?.books.get(m)?.decimals ?? 6);
+      view.header(mints);
+      const stopStream = await startStream(cfg, mints, rpcUrl, (s) => view.signal(s), { onFlow: (l) => view.event(l), onStatus: (m) => view.status(m), onEngine: (e) => (engine = e) });
+      stop = () => (stopStream(), view.stop());
+    }
     await new Promise<void>((done) => {
       process.once("SIGINT", done);
       process.once("SIGTERM", done);
