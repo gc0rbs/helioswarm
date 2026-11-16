@@ -6,8 +6,6 @@
   },
   "risk": {
     "maxTxPerMin": 10,
-    "maxBuySol": 0.05,
-    "maxSwarmSpendSol": 1,
     "slippageBps": 300,
     "feeBps": 100
   },

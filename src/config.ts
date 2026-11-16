@@ -105,8 +105,9 @@ export function parseConfig(raw: unknown): SwarmConfig {
     feed: { kind: feedKind, engineUrl: r.feed?.engineUrl, jupiterUrl: r.feed?.jupiterUrl, seed: r.feed?.seed },
     risk: {
       maxTxPerMin: num(r.risk?.maxTxPerMin, "risk.maxTxPerMin", 1, 600, 10),
-      maxBuySol: num(r.risk?.maxBuySol, "risk.maxBuySol", 0.0001, 1_000, 0.05),
-      maxSwarmSpendSol: num(r.risk?.maxSwarmSpendSol, "risk.maxSwarmSpendSol", 0, 100_000, 1),
+      // No cap unless set: each agent's bankroll (what you fund it with) decides how much it trades.
+      maxBuySol: r.risk?.maxBuySol == null ? Infinity : num(r.risk.maxBuySol, "risk.maxBuySol", 0.0001, 1e9),
+      maxSwarmSpendSol: r.risk?.maxSwarmSpendSol == null ? Infinity : num(r.risk.maxSwarmSpendSol, "risk.maxSwarmSpendSol", 0, 1e9),
       slippageBps: num(r.risk?.slippageBps, "risk.slippageBps", 1, 5_000, 300),
       feeBps: num(r.risk?.feeBps, "risk.feeBps", 0, 1_000, 100),
     },

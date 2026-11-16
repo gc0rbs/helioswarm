@@ -150,7 +150,7 @@ function systemPrompt(a: AgentSpec): string {
 }
 
 function turnPrompt({ agent, book, feed, maxBuySol, board, now }: BrainInput): string {
-  const lines = [`Cash: ${book.cashSol.toFixed(4)} SOL. Largest buy allowed now: ${maxBuySol.toFixed(4)} SOL.`, "Targets:"];
+  const lines = [`Cash: ${book.cashSol.toFixed(4)} SOL. Largest buy allowed now: ${Number.isFinite(maxBuySol) ? maxBuySol.toFixed(4) : book.cashSol.toFixed(4)} SOL.`, "Targets:"];
   for (const t of agent.targets) {
     const q = feed.latest(t.mint);
     if (!q) continue;

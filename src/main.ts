@@ -206,7 +206,7 @@ async function main() {
     if (!rpcUrl) throw new Error("live mode needs live.rpcUrl in the config or SOLANA_RPC_URL");
     wallets = await loadWallets(walletsDir, specs.map((s) => s.id));
     balances = await solBalances(rpcUrl, wallets);
-    console.warn(`[swarm] LIVE: ${specs.length} agents, each trading from its own wallet. Spend ceiling ${cfg.risk.maxSwarmSpendSol} SOL. Create ${cfg.killFile} to stop.`);
+    console.warn(`[swarm] LIVE: ${specs.length} agents, each trading from its own wallet. ${Number.isFinite(cfg.risk.maxSwarmSpendSol) ? `Spend ceiling ${cfg.risk.maxSwarmSpendSol} SOL.` : "No spend cap: agents trade what their wallets hold."} Create ${cfg.killFile} to stop.`);
     cfg.live.rpcUrl = rpcUrl;
   }
 
