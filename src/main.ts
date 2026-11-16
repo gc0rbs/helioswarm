@@ -253,6 +253,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(`[swarm] ${(e as Error).message}`);
+  console.error(`[swarm] ${tilde((e as Error).message.split(homedir()).join("~"))}`);
   process.exit(1);
 });
