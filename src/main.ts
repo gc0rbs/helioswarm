@@ -2,6 +2,7 @@
 //      pnpm start -- --config swarm.json --wallets   (create missing agent wallets, list addresses and balances)
 //      pnpm start -- --config swarm.json --watch     (stream on-chain flows and signals only, no trading)
 //      pnpm start -- --roster        (list deployable roster agents)
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -18,6 +19,9 @@ import { Swarm } from "./swarm";
 import { JupiterVenue, PaperVenue } from "./venues";
 import { ensureWallets, loadWallets, solBalances, walletPath } from "./wallets";
 import type { KeyPairSigner } from "@solana/kit";
+
+/** Shows paths under the home folder as ~/... so the username is not printed. */
+const tilde = (p: string) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -119,13 +123,13 @@ async function main() {
     const created = ensureWallets(walletsDir, ids);
     const wallets = await loadWallets(walletsDir, ids);
     const balances = rpcUrl ? await solBalances(rpcUrl, wallets) : null;
-    console.log(`${specs.length} agents, wallets in ${walletsDir}${created.length ? ` (${created.length} new)` : ""}`);
+    console.log(`${specs.length} agents, wallets in ${tilde(walletsDir)}${created.length ? ` (${created.length} new)` : ""}`);
     for (const s of specs) {
       const bal = balances ? `${balances.get(s.id)!.toFixed(4).padStart(10)} SOL` : "";
       console.log(`${s.id.padEnd(24)} ${wallets.get(s.id)!.address.padEnd(44)} bankroll ${String(s.bankrollSol).padStart(6)} ${bal}${created.includes(s.id) ? "  new" : ""}`);
     }
     if (!balances) console.log("Set SOLANA_RPC_URL to see balances.");
-    console.log(`Fund each wallet with its bankroll plus ${cfg.feeReserveSol} SOL for fees. Back up ${walletsDir}: it holds the private keys.`);
+    console.log(`Fund each wallet with its bankroll plus ${cfg.feeReserveSol} SOL for fees. Back up ${tilde(walletsDir)}: it holds the private keys.`);
     return;
   }
 
