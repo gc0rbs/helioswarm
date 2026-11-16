@@ -28,6 +28,8 @@ export const LAMPORTS = 1_000_000_000;
 const TX_FEE = 10_000n;
 /** Transfers per transaction (keeps each one well under the size limit). */
 const PER_TX = 15;
+/** Solana won't leave a wallet with a balance between 0 and its rent-exempt minimum, so the funding wallet keeps this much. */
+const RENT_MIN = 890_880n;
 
 export const FUNDING_FILE = "_funding.json";
 
@@ -113,7 +115,7 @@ export async function distribute(rpcUrl: string, funder: KeyPairSigner, topups: 
 /** Total the funding wallet needs to cover the top-ups plus fees. */
 export function fundingNeeded(topups: Topup[]): bigint {
   const txs = BigInt(Math.ceil(topups.length / PER_TX));
-  return topups.reduce((a, t) => a + t.lamports, 0n) + txs * TX_FEE;
+  return topups.reduce((a, t) => a + t.lamports, 0n) + txs * TX_FEE + RENT_MIN;
 }
 
 /** Waits until the funding wallet holds at least `need` lamports. */

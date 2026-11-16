@@ -15,7 +15,7 @@ describe("funding", () => {
       { id: "a", to: "A", lamports: 510_000_000n },
       { id: "b", to: "B", lamports: 110_000_000n },
     ]);
-    expect(fundingNeeded(t)).toBe(620_000_000n + 10_000n);
+    expect(fundingNeeded(t)).toBe(620_000_000n + 10_000n + 890_880n);
   });
 
   it("encodes a System Program transfer", async () => {
