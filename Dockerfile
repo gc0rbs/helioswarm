@@ -2,7 +2,7 @@
 # Needs SVS_X_TOKEN and SOLANA_RPC_URL; uses only public addresses (deploy/agents.json).
 FROM node:22-bookworm-slim
 WORKDIR /app
-RUN corepack enable
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* && corepack enable
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
