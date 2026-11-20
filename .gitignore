@@ -14,3 +14,6 @@ wallets/
 watch.out
 swarm.json.bak
 !deploy/swarm.json
+
+# mint store (orders, owners, encrypted X tokens)
+mint-data/

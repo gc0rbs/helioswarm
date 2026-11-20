@@ -174,6 +174,56 @@ When a live run starts, each agent's spendable cash is the lower of its `bankrol
 
 Without `SWARM_LIVE=1` a live config runs on paper and says so.
 
+## Minting agents
+
+With a `mint` section in the config, people can mint their own agent: they pick a name, a psychology and a persona, pay in SOL, and the agent joins your swarm. There are two tiers and one add-on:
+
+| | Default price | What the owner gets |
+|---|---|---|
+| `hosted` | 0.05 SOL | The agent runs on your swarm. This is always the cheapest tier; the config is refused if `code` is not priced above it. |
+| `code` | 0.5 SOL | Everything in hosted, plus a bundle with the agent's definition and a ready `swarm.json` to run it themselves, and (optionally) read access to your GitHub repository. A hosted agent can be upgraded later for the difference. |
+| X account | free | The owner of any minted agent can link an X account to it. |
+
+```sh
+SOLANA_RPC_URL=... pnpm start -- --config swarm.json --mint   # mint page and API at http://localhost:4600
+pnpm start -- --config swarm.json                             # minted agents are deployed after the config's own groups
+```
+
+```json
+"mint": {
+  "treasury": "<your wallet address>",
+  "publicUrl": "https://mint.example.com",
+  "tiers": { "hosted": { "priceSol": 0.05 }, "code": { "priceSol": 0.5, "repo": "you/your-fork" } },
+  "agent": { "bankrollSol": 0.1, "targets": [{ "mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "symbol": "BONK" }], "tasks": ["trade", "report"] },
+  "x": { "post": false }
+}
+```
+
+| `mint` key | Default | |
+|---|---|---|
+| `treasury` | required | Address that receives payments. Only the public address is needed; no key is ever read. |
+| `tiers.hosted.priceSol`, `tiers.code.priceSol` | `0.05`, `0.5` | Prices. `code` must be higher than `hosted`. |
+| `tiers.code.repo` | none | `owner/name` of a repository code-tier owners are invited to with read access. Needs a GitHub token in `MINT_GITHUB_TOKEN` that can add collaborators. |
+| `agent` | | What every minted agent is deployed with: `bankrollSol` (0.1), `targets` (required), `tasks`, `brain`, `rules`. |
+| `maxSupply` | none | Most agents that can ever be minted. |
+| `orderTtlMin` | `15` | How long an unpaid order holds its name. |
+| `port`, `publicUrl` | `4600`, `http://localhost:<port>` | Where the mint server listens, and its public address (used for the X callback). |
+| `trustProxy` | `false` | Set when the server sits behind a reverse proxy, so the limit on new orders (20 per address per 10 minutes) uses `X-Forwarded-For`. |
+| `dataDir` | `mint-data` | Folder for the mint's records, relative to the config file. Gitignored; back it up. |
+| `x.enabled`, `x.post`, `x.postEveryTicks` | `true`, `false`, `240` | X linking, and whether linked agents post their own reports. |
+
+**Paying.** An order asks for an exact amount: the tier price plus a few lamports that identify the order. The page offers a Solana Pay link, which wallets fill in with the amount and a reference address, and the server finds that payment on chain by itself. Someone who sends the amount by hand pastes the transaction signature instead. Either way the server reads the transaction over `SOLANA_RPC_URL` and checks that it succeeded, that the treasury received the amount, that it is newer than the order, and that it has not paid for another order. A payment that arrives after its order expired still mints, as long as nobody else took the name in between.
+
+**Owning.** Each order comes with an owner token, shown once on the page and kept in that browser. It is the only key to the agent: it links X, downloads the code bundle and upgrades the tier. Only its hash is stored. The paying wallet is recorded as the owner address but is never asked to sign anything.
+
+**Hosted agents.** A swarm run loads minted agents when it starts, so agents minted while it runs join at the next start. In live mode each one gets its own wallet like any other agent, and `--fund` funds it from your funding wallet with `agent.bankrollSol`: the mint price buys the agent, not a balance the owner can withdraw.
+
+**X accounts.** Create an app at developer.x.com with OAuth 2.0 turned on and `<publicUrl>/x/callback` as its callback URL. Set `X_CLIENT_ID` (and `X_CLIENT_SECRET` for a confidential client) and `MINT_SECRET`, any long random string, which encrypts the X tokens at rest. Owners link through X's own sign-in (authorization code with PKCE); the handle then shows next to the agent. One X account can back several agents only when the same wallet minted them. With `x.post` on, a linked agent runs the `xpost` task and posts its own equity and P&L every `postEveryTicks` ticks, marked "(paper trading)" unless the run is live. Without it, linking only shows the handle.
+
+Mint API, all JSON: `GET /api/mint/config`, `POST /api/mint/orders`, `GET /api/mint/orders/:id`, `POST /api/mint/orders/:id/confirm`, `GET /api/agents`, and with `Authorization: Bearer <owner token>`: `GET /api/agents/:id`, `GET /api/agents/:id/code`, `POST /api/agents/:id/upgrade`, `POST /api/agents/:id/github`, `POST` and `DELETE /api/agents/:id/x`.
+
+Not done yet: minted agents are records on this server, not on-chain NFTs, so they can't be traded or seen in a wallet. Put the mint server behind HTTPS before taking real payments.
+
 ## Limits of this first cut
 
 - Live fills are booked at Jupiter's quoted amount, not parsed from the landed transaction; sells are capped at the wallet's real token balance.
