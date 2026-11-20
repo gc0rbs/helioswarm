@@ -18,7 +18,9 @@ import { balanceLamports, distribute, ensureFundingWallet, fundingNeeded, LAMPOR
 import { Dashboard } from "./dashboard";
 import { PrettyWatch } from "./pretty";
 import { prettyRunLine } from "./pretty-run";
+import { warmupCandles } from "./history";
 import { expandGroups, loadRoster } from "./roster";
+import { defaultStrategy, describeStrategy, STRATEGIES, STRATEGY_IDS } from "./strategies";
 import { Swarm } from "./swarm";
 import { JupiterVenue, PaperVenue } from "./venues";
 import { ensureWallets, loadWallets, solBalances, walletPath } from "./wallets";
@@ -129,6 +131,14 @@ async function startStream(
 async function main() {
   if (process.argv.includes("--roster")) {
     for (const r of loadRoster()) console.log(`${r.name.padEnd(24)} ${(r.preset ?? "?").padEnd(10)} ${r.persona.slice(0, 90)}`);
+    return;
+  }
+  if (process.argv.includes("--strategies")) {
+    for (const id of STRATEGY_IDS) {
+      const d = STRATEGIES[id];
+      console.log(`\n${id}: ${d.summary}\n  ${describeStrategy(defaultStrategy(id))}`);
+      for (const [k, s] of Object.entries(d.params)) console.log(`  ${k.padEnd(15)} ${String(s.default).padEnd(7)} (${s.min} to ${s.max})  ${s.help}`);
+    }
     return;
   }
   const path = resolve(arg("config") ?? "swarm.json");
@@ -304,6 +314,7 @@ async function main() {
   }
   process.once("SIGINT", () => swarm.stop("SIGINT"));
   process.once("SIGTERM", () => swarm.stop("SIGTERM"));
+  if (cfg.warmup && cfg.feed.kind === "jupiter") await swarm.warmup((mint, barSec, bars) => warmupCandles(mint, barSec, bars));
   const ticks = arg("ticks");
   await swarm.run(ticks ? Number(ticks) : undefined);
   stopStream();

@@ -12,6 +12,7 @@ import type { AgentSpec } from "./roster";
 import { makeTask, type Task, type TaskContext } from "./tasks";
 import type { Venue } from "./venues";
 import { Board, type Signal } from "./board";
+import { StrategyBrain } from "./strategies";
 
 export interface SwarmDeps {
   feed: PriceFeed;
@@ -42,13 +43,22 @@ export class Swarm {
   private txTimes: number[] = [];
   private tickNo = 0;
   private stopped = false;
+  private rules = new Map<string, StrategyBrain>();
 
   constructor(private cfg: SwarmConfig, specs: AgentSpec[], deps: SwarmDeps) {
     this.feed = deps.feed;
     this.now = deps.now ?? Date.now;
     this.emit = deps.emit ?? ((l) => console.log(JSON.stringify(l)));
     this.venue = deps.venue(this.ledger);
-    const brainFor = deps.brainFor ?? ((a: AgentSpec) => (a.brain === "claude" ? new ClaudeBrain({ fallback: new TraitBrain(a.id) }) : new TraitBrain(a.id)));
+    const brainFor =
+      deps.brainFor ??
+      ((a: AgentSpec): Brain => {
+        if (a.brain === "traits") return new TraitBrain(a.id);
+        const rules = new StrategyBrain(a.strategy);
+        this.rules.set(a.id, rules);
+        // The model picks among setups; the strategy still caps its size and takes over if the model fails.
+        return a.brain === "claude" ? new ClaudeBrain({ fallback: rules, clamp: (i, x) => rules.clamp(i, x) }) : rules;
+      });
     this.agents = specs.map((spec) => {
       this.ledger.open(spec.id, spec.bankrollSol);
       return { spec, brain: brainFor(spec), tasks: spec.tasks.map(makeTask), state: {} };
@@ -91,6 +101,34 @@ export class Swarm {
         }
       }
     });
+  }
+
+  /**
+   * Fills every strategy agent's bars from past candles, so it can trade from
+   * the first tick instead of waiting out its lookback. A coin whose history
+   * can't be fetched is logged and simply warms up from live prices.
+   */
+  async warmup(candles: (mint: string, barSec: number, bars: number) => Promise<{ t: number; o: number; h: number; l: number; c: number }[]>): Promise<void> {
+    await this.feed.refresh(this.mints);
+    const cache = new Map<string, Promise<{ t: number; o: number; h: number; l: number; c: number }[]>>();
+    for (const { spec } of this.agents) {
+      const brain = this.rules.get(spec.id);
+      if (!brain) continue;
+      const barSec = brain.cfg.params.barSec!;
+      for (const t of spec.targets) {
+        const price = this.feed.latest(t.mint)?.priceSol;
+        if (!price) continue;
+        const key = `${t.mint}|${barSec}|${brain.warmupBars}`;
+        try {
+          if (!cache.has(key)) cache.set(key, candles(t.mint, barSec, brain.warmupBars));
+          const cs = await cache.get(key)!;
+          brain.seed(t.mint, cs, price, this.now());
+          this.log("warmup", { agent: spec.id, mint: t.mint, candles: cs.length, barSec });
+        } catch (e) {
+          this.log("warmup", { agent: spec.id, mint: t.mint, error: (e as Error).message });
+        }
+      }
+    }
   }
 
   get mints(): string[] {
@@ -158,6 +196,7 @@ export class Swarm {
       return {
         agent: spec.id,
         preset: spec.preset,
+        strategy: spec.strategy.id,
         equitySol: +equity.toFixed(6),
         pnlPct: +((equity / b.startSol - 1) * 100).toFixed(2),
         trades: b.trades,

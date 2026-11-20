@@ -1,6 +1,6 @@
 # Agent Swarm
 
-Deploy a swarm of HelioSwarm agents that trade chosen token contracts on Solana and run other jobs alongside. Agents come from the engine's roster (`data/sim-agents.json`, copied from HelioSwarm, persona, traits and rules included) or are stamped out from a psychology preset (`degen`, `momentum`, `holder`, `contrarian`, `sniper`, `showman`) as many times as you like.
+Deploy a swarm of HelioSwarm agents that trade chosen token contracts on Solana and run other jobs alongside. Each agent trades one of four rule-based styles (`trend`, `reversion`, `flow`, `accumulate`) with settings you can tune. Agents come from the engine's roster (`data/sim-agents.json`, copied from HelioSwarm, persona, traits and rules included) or are stamped out from a psychology preset (`degen`, `momentum`, `holder`, `contrarian`, `sniper`, `showman`) as many times as you like.
 
 **Paper trading is the default.** Real swaps happen only when the config says `"mode": "live"` *and* the environment has `SWARM_LIVE=1`, and every agent trades from its own wallet: one keypair file per agent in `wallets/`. Keys never go in the config.
 
@@ -13,6 +13,7 @@ pnpm start -- --config swarm.json --ticks 50   # a bounded run
 pnpm start -- --config swarm.json --wallets   # create/list one wallet per agent
 pnpm start -- --config swarm.json --watch     # stream on-chain flows and signals only
 pnpm start -- --roster                               # list roster agents
+pnpm start -- --strategies                           # list the trading styles and every setting
 ```
 
 Every event (fill, refused order, alert, report, summary) is a JSON line on stdout and in `logFile`. Create the `killFile` (default `SWARM_STOP`) or press Ctrl-C to stop; a final summary with each agent's equity and P&L is printed on the way out.
@@ -36,6 +37,7 @@ Every event (fill, refused order, alert, report, summary) is a JSON line on stdo
 | `coordination` | see below | How agents share the board |
 | `stream` | off | Real-time on-chain data from SVS, see below |
 | `signals` | see below | Thresholds for stream signals |
+| `warmup` | `true` | Load past candles at startup (GeckoTerminal) so styles on long bars can trade from the first tick. Jupiter feed only |
 | `plugins` | `[]` | Modules that call `registerTask()` to add task types |
 | `groups` | | See below |
 
@@ -49,14 +51,43 @@ Each group:
 | `targets` | Token mints the agents may trade, as strings or `{ mint, symbol }` |
 | `tasks` | Task names run each tick, in order (default `["trade"]`) |
 | `rules` | HelioSwarm trading rules: `takeProfitPct`, `stopLossPct`, `sellAfterMin`, `maxSolPerCoin`, `maxCoins` |
-| `brain` | `traits` (no model, reads the psychology) or `claude` (asks a model with the persona, falls back to `traits`) |
+| `strategy` | The trading style: a name, or `{ "id", "profile", "params" }`. See below. Defaults to the style that fits the preset |
+| `brain` | `strategy` (default: the style's rules, no model), `claude` (a model picks among setups inside the style; the style caps its size and takes over if the model fails) or `traits` (the old dice brain that reads the psychology) |
 | `taskOptions` | Per-task settings, e.g. `{ "watch": { "alertPct": 5, "webhook": "https://..." } }` |
 
 The `claude` brain reads `ANTHROPIC_API_KEY` and `SWARM_MODEL` (default `claude-haiku-5-5`).
 
+## Trading styles
+
+| Style | In one line | Default bar |
+|---|---|---|
+| `trend` | Buys a close above the recent range and trails a stop behind the move | 4 hours |
+| `reversion` | Buys a sharp dip below the rolling average while the longer trend holds, sells when it snaps back | 5 minutes |
+| `flow` | Follows on-chain buy pressure, takes profit in steps and leaves fast. Needs the `stream` | 1 minute |
+| `accumulate` | Buys in slices while the long trend is up, sells out when it breaks | 4 hours |
+
+```json
+{ "preset": "momentum", "count": 3, "bankrollSol": 2, "targets": ["..."], "strategy": "trend" }
+{ "preset": "contrarian", "bankrollSol": 2, "targets": ["..."],
+  "strategy": { "id": "reversion", "profile": "cautious", "params": { "entryZ": -2.5, "costBps": 150 } } }
+```
+
+- **`profile`** is `cautious`, `balanced` or `aggressive`. It halves or doubles how much is put at risk and leaves the signals alone. A preset's risk trait picks it when you don't.
+- **`params`** overrides any setting. A misspelt name or a number out of range stops the config from loading. `pnpm start -- --strategies` lists them all.
+- **Every style shares one risk layer:** each buy is sized so that hitting its stop loses `riskPct` of equity (1%), capped at `maxPositionPct` in one coin; entries that cannot beat `costBps` (the round trip you expect to pay) are skipped; three losing sells in a row or a 5% loss on the day pause new buys.
+- **Small bankrolls trade rarely.** Buys under `minOrderSol` (0.01 SOL) are skipped because network fees are a fixed cost. At 1% risk that needs roughly 1 SOL of bankroll.
+- Sponsor `rules` (take profit, stop loss, time exit, caps) still run first, and swarm exit signals still sell everything.
+
+The evidence behind each default, the references and the backtest results on real memecoin prices are in [docs/strategies.md](docs/strategies.md). The short version: in a month where the median memecoin fell 25%, each style lost about 1% or less on average; none made money. They are risk rules, not a promise of profit.
+
+```sh
+pnpm fetch-ohlcv -- <mint> --sec 60 --out candles.csv   # past candles for a token
+pnpm backtest -- candles.csv --fee 30 --slip 40         # replay every style over them
+```
+
 ## Tasks
 
-- `trade`: sponsor rules first (take profit, stop loss, time exit), then the brain decides buy, sell or hold.
+- `trade`: sponsor rules first (take profit, stop loss, time exit), then the brain (the agent's trading style by default) decides buy, sell or hold.
 - `watch`: logs an `alert` (and POSTs to `webhook` if set) when a target moves `alertPct` since the last alert.
 - `report`: logs equity and P&L every `every` ticks (default 20).
 
@@ -77,7 +108,7 @@ A task gets the agent, its book, the price feed, its brain, per-task options and
 
 ## Coordination: the shared board
 
-Every agent reads one shared board before it decides. The board shows what the other agents hold, which coins any agent just sold, and every live signal about a coin. The `claude` brain sees all of this in its prompt. The `traits` brain sells out of flagged coins, skips blocked ones and leans toward coins with buy pressure.
+Every agent reads one shared board before it decides. The board shows what the other agents hold, which coins any agent just sold, and every live signal about a coin. The `claude` brain sees all of this in its prompt. Every style sells out of flagged coins and skips blocked ones, and the `flow` style buys only on buy pressure.
 
 | `coordination` key | Default | |
 |---|---|---|

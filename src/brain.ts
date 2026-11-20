@@ -11,6 +11,7 @@ import type { Board } from "./board";
 import type { Book } from "./ledger";
 import type { AgentSpec } from "./roster";
 import { hashSeed, rng } from "./rng";
+import { describeStrategy } from "./strategies";
 
 export type Action =
   | { kind: "buy"; mint: string; sol: number; reason: string }
@@ -110,6 +111,8 @@ export interface ClaudeBrainOptions {
   model?: string;
   complete?: Complete;
   fallback?: Brain;
+  /** Last word on the model's action, e.g. a strategy capping its buy size. */
+  clamp?: (input: BrainInput, action: Action) => Action;
 }
 
 export class ClaudeBrain implements Brain {
@@ -117,7 +120,9 @@ export class ClaudeBrain implements Brain {
   private complete: Complete;
   private model: string;
   private fallback: Brain;
+  private clamp: (input: BrainInput, action: Action) => Action;
   constructor(o: ClaudeBrainOptions = {}) {
+    this.clamp = o.clamp ?? ((_, a) => a);
     this.complete = o.complete ?? anthropicComplete();
     this.model = o.model ?? process.env.SWARM_MODEL ?? "claude-haiku-5-5";
     this.fallback = o.fallback ?? new TraitBrain();
@@ -127,7 +132,7 @@ export class ClaudeBrain implements Brain {
     try {
       const text = await this.complete({ model: this.model, system: systemPrompt(input.agent), user: turnPrompt(input), maxTokens: 300 });
       const a = parseAction(text, input);
-      if (a) return a;
+      if (a) return this.clamp(input, a);
     } catch {
       /* fall through */
     }
@@ -142,6 +147,7 @@ function systemPrompt(a: AgentSpec): string {
     `You are ${a.name}, a trading agent in a swarm. ${a.persona}`,
     `Goal: ${goal?.name ?? a.goal}. ${goal?.summary ?? ""}`,
     `Traits (0-255): risk ${a.traits.risk}, patience ${a.traits.patience}, contrarian ${a.traits.contrarian}, paranoia ${a.traits.paranoia}.`,
+    a.strategy ? `Your trading style: ${describeStrategy(a.strategy)} Stay inside it: only buy setups this style would take, and size no larger than it allows.` : "",
     rules.length ? `Your sponsor's rules (enforced for you): ${rules.join(" ")}` : "",
     `Each turn answer with ONLY a JSON object: {"action":"buy"|"sell"|"hold","mint":"<mint>","sol":<number, buys only>,"fraction":<0-1, sells only>,"reason":"<under 15 words>"}.`,
   ]
