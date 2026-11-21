@@ -112,7 +112,8 @@ describe("roster", () => {
 
 describe("paper swarm", () => {
   it("trades on a sim feed and keeps every book consistent", async () => {
-    const cfg = config();
+    // The dice brain trades on any feed from the first tick, which is what this bookkeeping test needs.
+    const cfg = config({}, { brain: "traits" });
     const swarm = new Swarm(cfg, expandGroups(cfg.groups), { feed: new SimFeed(7), venue: paper(cfg), ...quiet });
     for (let i = 0; i < 200; i++) await swarm.tick();
     const sum = swarm.summary();

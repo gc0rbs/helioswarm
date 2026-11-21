@@ -9,11 +9,15 @@ import { readFileSync } from "node:fs";
 import { DEFAULT_COORDINATION, type CoordinationConfig, type SignalKind } from "./board";
 import { DEFAULT_SIGNALS, type SignalConfig } from "./stream/signals";
 import { DEFAULT_STREAM, type StreamConfig } from "./stream/types";
+import { STRATEGY_IDS, type RiskProfile, type StrategyId } from "./strategies";
 import { normalizeRules, PSYCHOLOGIES, type PsychologyId, type TradingRules } from "./types";
 
 export type Mode = "paper" | "live";
 export type FeedKind = "sim" | "helioswarm" | "jupiter";
-export type BrainKind = "traits" | "claude";
+export type BrainKind = "strategy" | "traits" | "claude";
+
+/** A group's trading style: a strategy name, or one with a risk profile and tuned settings. */
+export type StrategyInput = StrategyId | { id?: StrategyId; profile?: RiskProfile; params?: Record<string, number> };
 
 export interface Target {
   /** Token mint (the contract the agent trades against SOL). */
@@ -39,6 +43,9 @@ export interface GroupConfig {
   tasks: string[];
   /** Exits and limits, the same shape as HelioSwarm trading rules. */
   rules?: TradingRules;
+  /** Trading style. Defaults to the one that fits each agent's preset. */
+  strategy?: StrategyInput;
+  /** "strategy" (default) trades the style's rules, "claude" asks a model inside them, "traits" is the old dice brain. */
   brain?: BrainKind;
   /** Free-form per-task settings, e.g. { "watch": { "alertPct": 5 } }. */
   taskOptions?: Record<string, Record<string, unknown>>;
@@ -70,6 +77,8 @@ export interface SwarmConfig {
   killFile: string;
   /** Modules that call registerTask() to add task types. Paths are relative to the config file. */
   plugins: string[];
+  /** Load past candles at startup so strategies can trade from the first tick (not for the sim feed). */
+  warmup: boolean;
   groups: GroupConfig[];
   coordination: CoordinationConfig;
   /** Real-time on-chain data (SVS Yellowstone gRPC). Off when absent. */
@@ -117,6 +126,7 @@ export function parseConfig(raw: unknown): SwarmConfig {
     feeReserveSol: num(r.feeReserveSol, "feeReserveSol", 0, 10, 0.01),
     killFile: r.killFile ?? "SWARM_STOP",
     plugins: Array.isArray(r.plugins) ? r.plugins.map((p: unknown, i: number) => str(p, `plugins[${i}]`)) : [],
+    warmup: r.warmup === undefined ? true : Boolean(r.warmup),
     groups: groups.map((g: any, i: number) => parseGroup(g, `groups[${i}]`)),
     coordination: parseCoordination(r.coordination),
     stream: parseStream(r.stream),
@@ -138,7 +148,12 @@ function parseGroup(g: any, label: string): GroupConfig {
   });
   if (!targets.length) throw new Error(`${label}.targets must list at least one mint`);
   const tasks = Array.isArray(g.tasks) && g.tasks.length ? g.tasks.map((t: unknown, i: number) => str(t, `${label}.tasks[${i}]`)) : ["trade"];
-  const brain: BrainKind = g.brain === "claude" ? "claude" : "traits";
+  if (g.brain !== undefined && !["strategy", "traits", "claude"].includes(g.brain)) throw new Error(`${label}.brain must be strategy, traits or claude`);
+  const brain: BrainKind = g.brain ?? "strategy";
+  if (g.strategy !== undefined) {
+    const id = typeof g.strategy === "string" ? g.strategy : g.strategy?.id;
+    if (id !== undefined && !STRATEGY_IDS.includes(id)) throw new Error(`${label}.strategy must be one of ${STRATEGY_IDS.join(", ")}`);
+  }
   if (g.walletEnv !== undefined) throw new Error(`${label}.walletEnv is gone: every agent now has its own wallet in walletsDir (run with --wallets)`);
   return {
     roster,
@@ -150,6 +165,7 @@ function parseGroup(g: any, label: string): GroupConfig {
     targets,
     tasks,
     rules: normalizeRules(g.rules),
+    strategy: g.strategy,
     brain,
     taskOptions: g.taskOptions ?? {},
   };

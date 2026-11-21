@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { GOAL_BY_PRESET, nearestPreset, PSYCHOLOGIES, TEMPERAMENT_BY_PRESET, type GoalId, type PsychologyId, type Temperament, type TradingRules, type Traits } from "./types";
 
 import type { BrainKind, GroupConfig, Target } from "./config";
+import { parseStrategy, profileForRisk, STRATEGY_BY_PRESET, type StrategyConfig } from "./strategies";
 
 export interface RosterEntry {
   name: string;
@@ -29,6 +30,8 @@ export interface AgentSpec {
   targets: Target[];
   tasks: string[];
   rules: TradingRules;
+  /** The trading style and its settings, fully resolved. */
+  strategy: StrategyConfig;
   brain: BrainKind;
   /** Index of the group it came from. Each agent still has its own wallet. */
   group: number;
@@ -50,7 +53,9 @@ export function expandGroups(groups: GroupConfig[], roster: RosterEntry[] = load
   const out: AgentSpec[] = [];
   const seen = new Set<string>();
   groups.forEach((g, gi) => {
-    const base = { bankrollSol: g.bankrollSol, targets: g.targets, tasks: g.tasks, brain: g.brain ?? "traits", group: gi, taskOptions: g.taskOptions ?? {} } as const;
+    const base = { bankrollSol: g.bankrollSol, targets: g.targets, tasks: g.tasks, brain: g.brain ?? "strategy", group: gi, taskOptions: g.taskOptions ?? {} } as const;
+    // The group's strategy wins; otherwise the preset picks the style and its risk trait picks the size.
+    const strategyFor = (preset: PsychologyId, risk: number) => parseStrategy(g.strategy, `groups[${gi}].strategy`, { id: STRATEGY_BY_PRESET[preset], profile: profileForRisk(risk) });
     for (const name of g.roster ?? []) {
       const r = roster.find((x) => x.name.toLowerCase() === name.toLowerCase());
       if (!r) throw new Error(`no roster agent named "${name}"`);
@@ -66,6 +71,7 @@ export function expandGroups(groups: GroupConfig[], roster: RosterEntry[] = load
         temperament: { ...TEMPERAMENT_BY_PRESET[preset], ...(r.tilt != null ? { tilt: r.tilt } : {}), ...(r.regret != null ? { regret: r.regret } : {}) },
         // Group rules override the roster agent's own.
         rules: { ...r.rules, ...g.rules },
+        strategy: strategyFor(preset, r.traits?.risk ?? presetOf(preset).traits.risk),
       });
     }
     if (g.preset) {
@@ -82,6 +88,7 @@ export function expandGroups(groups: GroupConfig[], roster: RosterEntry[] = load
           traits: { ...p.traits },
           temperament: { ...TEMPERAMENT_BY_PRESET[p.id] },
           rules: { ...g.rules },
+          strategy: strategyFor(p.id, p.traits.risk),
         });
       }
     }

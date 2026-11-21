@@ -61,7 +61,8 @@
       "tasks": [
         "trade",
         "report"
-      ]
+      ],
+      "strategy": "trend"
     },
     {
       "preset": "sniper",
@@ -87,6 +88,14 @@
       "taskOptions": {
         "watch": {
           "alertPct": 5
+        }
+      },
+      "strategy": {
+        "id": "flow",
+        "profile": "cautious",
+        "params": {
+          "maxHoldBars": 20,
+          "tp1Pct": 25
         }
       }
     },
@@ -117,7 +126,35 @@
         "watch": {
           "alertPct": 3
         }
-      }
+      },
+      "strategy": "accumulate"
+    },
+    {
+      "preset": "contrarian",
+      "count": 2,
+      "namePrefix": "fade",
+      "bankrollSol": 0.3,
+      "strategy": {
+        "id": "reversion",
+        "params": {
+          "entryZ": -2.5,
+          "costBps": 150
+        }
+      },
+      "targets": [
+        {
+          "mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+          "symbol": "BONK"
+        },
+        {
+          "mint": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+          "symbol": "WIF"
+        }
+      ],
+      "tasks": [
+        "trade",
+        "report"
+      ]
     }
   ]
 }

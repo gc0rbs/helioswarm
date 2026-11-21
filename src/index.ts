@@ -1,4 +1,7 @@
 export * from "./brain";
+export * from "./strategies";
+export * from "./backtest";
+export * from "./history";
 export * from "./config";
 export * from "./feeds";
 export * from "./ledger";
