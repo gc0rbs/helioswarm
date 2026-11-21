@@ -63,7 +63,7 @@ The `claude` brain reads `ANTHROPIC_API_KEY` and `SWARM_MODEL` (default `claude-
 |---|---|---|
 | `trend` | Buys a close above the recent range and trails a stop behind the move | 4 hours |
 | `reversion` | Buys a sharp dip below the rolling average while the longer trend holds, sells when it snaps back | 5 minutes |
-| `flow` | Follows on-chain buy pressure, takes profit in steps and leaves fast. Needs the `stream` | 1 minute |
+| `flow` | Follows on-chain buy pressure on coins worth at least 200 SOL, takes profit in steps and leaves fast. Needs the `stream` | 1 minute |
 | `accumulate` | Buys in slices while the long trend is up, sells out when it breaks | 4 hours |
 
 ```json
@@ -78,7 +78,7 @@ The `claude` brain reads `ANTHROPIC_API_KEY` and `SWARM_MODEL` (default `claude-
 - **Small bankrolls trade rarely.** Buys under `minOrderSol` (0.01 SOL) are skipped because network fees are a fixed cost. At 1% risk that needs roughly 1 SOL of bankroll.
 - Sponsor `rules` (take profit, stop loss, time exit, caps) still run first, and swarm exit signals still sell everything.
 
-The evidence behind each default, the references and the backtest results on real memecoin prices are in [docs/strategies.md](docs/strategies.md). The short version: in a month where the median memecoin fell 25%, each style lost about 1% or less on average; none made money. They are risk rules, not a promise of profit.
+The evidence behind each default, the references and the backtest results on real memecoin prices are in [docs/strategies.md](docs/strategies.md). The short version: across 9,226 fresh pump.fun launches every rule we tried lost money on average, buying into strong buy pressure most of all (-7.4% a trade), and only skipping the smallest launches and paying lower costs moved the result. On established memecoins, in a month where the median fell 25%, each style lost about 1%. They are risk rules, not a promise of profit.
 
 ```sh
 pnpm fetch-ohlcv -- <mint> --sec 60 --out candles.csv   # past candles for a token

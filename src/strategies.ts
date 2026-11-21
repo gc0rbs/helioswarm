@@ -10,7 +10,7 @@
 // gives a direction but no number, the doc says the number is a judgment call.
 import type { Action, Brain, BrainInput } from "./brain";
 import type { PriceFeed } from "./feeds";
-import type { PsychologyId } from "./types";
+import { TOTAL_SUPPLY_TOKENS, type PsychologyId } from "./types";
 
 export type StrategyId = "trend" | "reversion" | "flow" | "accumulate";
 export type RiskProfile = "cautious" | "balanced" | "aggressive";
@@ -45,6 +45,7 @@ const COMMON: Record<string, ParamSpec> = {
   minOrderSol: P(0.01, 0, 10, "Smallest buy worth sending. Smaller sizes are skipped, since fixed network fees eat them."),
   maxLossStreak: P(3, 0, 50, "Losing sells in a row that pause new buys. 0 turns it off.", true),
   pauseBars: P(60, 0, 100_000, "How long that pause lasts, in bars.", true),
+  minMcapSol: P(0, 0, 10_000_000, "Skip coins whose market cap is under this many SOL, counted as price x 1 billion tokens (the pump.fun and HelioSwarm supply). 0 turns it off; leave it off for coins with another supply."),
   dailyLossPct: P(5, 0, 100, "Stop buying for the rest of the UTC day once equity is down this many percent on the day. 0 turns it off."),
 };
 
@@ -97,8 +98,8 @@ export const STRATEGIES: Record<StrategyId, StrategyDef> = {
     "flow",
     "Flow",
     "Buys when many distinct wallets are buying on-chain and price confirms, sells part into strength and leaves quickly when the flow fades. Needs the on-chain stream.",
-    ["Kyle (1985) and Cont, Kukanov, Stoikov (2014), order flow and price impact", "Chordia, Subrahmanyam (2004), Order imbalance and individual stock returns", "Li, Shin, Wang (2025), Cryptocurrency pump-and-dump schemes: gains fade within the hour", "Marino et al. (2026) and Solidus Labs (2025), pump.fun base rates"],
-    { barSec: 60, stopPct: 15, trailPct: 20, maxHoldBars: 15, cooldownBars: 10 },
+    ["Kyle (1985) and Cont, Kukanov, Stoikov (2014), order flow and price impact", "Chordia, Subrahmanyam (2004), Order imbalance and individual stock returns", "Li, Shin, Wang (2025), Cryptocurrency pump-and-dump schemes: gains fade within the hour", "Marino et al. (2026) and Solidus Labs (2025), pump.fun base rates", "Replay of 9,226 fresh pump.fun launches (June 2026): see docs/strategies.md"],
+    { barSec: 60, riskPct: 0.5, stopPct: 15, trailPct: 20, maxHoldBars: 15, cooldownBars: 10, minMcapSol: 200 },
     {
       minScore: P(0.25, 0, 1, "Weakest buy_pressure signal worth following (0 to 1). The signal itself is tuned under signals in the config."),
       confirmBars: P(3, 1, 100, "Price must be up over this many bars before buying.", true),
@@ -397,6 +398,8 @@ export class StrategyBrain implements Brain {
     for (const t of agent.targets) {
       if ((this.cooldown.get(t.mint) ?? 0) > now) continue;
       if (board?.buyBlock(agent.id, t.mint, now)) continue;
+      // The smallest fresh launches lost the most in testing, whatever the signal.
+      if (p.minMcapSol! > 0 && (feed.latest(t.mint)?.priceSol ?? 0) * TOTAL_SUPPLY_TOKENS < p.minMcapSol!) continue;
       const e = this.entry(input, t.mint);
       if (e && (!best || e.strength > best.strength)) best = e;
     }

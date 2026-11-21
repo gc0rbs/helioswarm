@@ -2,7 +2,12 @@
 
 Agents trade one of four styles. Each is a short list of rules with numbers you can tune per group. This page gives the rules, the evidence behind each default, and the results of replaying them over real memecoin prices.
 
-**Read this first.** None of these styles is a money machine, and the tests below say so. In the month tested, the median memecoin fell 25% and no long-only style made money; what the styles did was lose about 1% instead. Over three years the median coin fell 84%. The honest claim is that these rules keep an agent out of most of the damage and trade rarely enough that costs do not eat it, not that they produce profit. Paper trade your own targets before going live.
+**Read this first.** None of these styles is a money machine, and the tests below say so.
+
+- **On fresh launches, which is where these agents mostly trade, every rule we tried lost money on average.** Across 9,226 new pump.fun launches, buying and managing the position with the flow style's exits lost 4.6% a trade. Buying into strong buy pressure was the worst entry of all, at -7.4%. See [Fresh launches](#fresh-launches-the-test-that-matters-most).
+- On established memecoins, in a month when the median coin fell 25%, the styles lost about 1% instead. Over three years the median coin fell 84%.
+
+The honest claim is that these rules limit damage and keep costs from eating an agent, not that they produce profit. The two things that moved results most were trading costs and avoiding the smallest launches. Paper trade your own targets before going live.
 
 ## The four styles
 
@@ -10,12 +15,40 @@ Agents trade one of four styles. Each is a short list of rules with numbers you 
 |---|---|---|---|---|
 | `trend` | A bar closes above the 20-bar high and price is above its 50-bar average | A bar closes below the 10-bar low, price falls 3 ATR from its high, or the stop is hit | 4 hours | Prices |
 | `reversion` | Price is 2 standard deviations under its 20-bar average, the 20-bar average is above the 200-bar one, and the distance back to the average is at least 2.5 times the round-trip cost | Price is back within 0.5 standard deviations, 30 bars pass, or the stop is hit | 5 minutes | Prices |
-| `flow` | A `buy_pressure` signal is active, price is up over 3 bars, it has not already run 40% in 15 bars, and the coin moves enough to pay costs | 40% of the position at +30%, half the rest at +75%, the rest 20% off the high, after 15 bars, or on any sell signal | 1 minute | The on-chain stream |
+| `flow` | A `buy_pressure` signal is active, the coin is worth at least 200 SOL, price is up over 3 bars, it has not already run 40% in 15 bars, and the coin moves enough to pay costs | 40% of the position at +30%, half the rest at +75%, the rest 20% off the high, after 15 bars, or on any sell signal | 1 minute | The on-chain stream |
 | `accumulate` | Every 6 bars while price is above its 60-bar average, 5% of equity each time, up to 30% in one coin | A bar closes 5% under that average, or the stop is hit | 4 hours | Prices |
 
 Presets pick a style when a group names none: `momentum` and `showman` trade `trend`, `contrarian` trades `reversion`, `sniper` and `degen` trade `flow`, `holder` trades `accumulate`. The preset's risk trait picks the profile: `cautious` halves the size settings, `aggressive` doubles them, and neither changes the signals.
 
 `pnpm start -- --strategies` prints every setting with its default and allowed range.
+
+## Fresh launches: the test that matters most
+
+Most coins these agents trade are minutes old. So we replayed the flow style's rules over real launches.
+
+**Data.** [ian05012/solana-memecoin-dataset](https://github.com/ian05012/solana-memecoin-dataset) (MIT licence): tokens detected as they graduated from pump.fun or trended, 10 to 29 June 2026, with 9.5 million wallet-level trades and 15-minute candles after detection. 9,226 tokens have usable candles. At detection the median token was 7 minutes old, worth $10,400, with $8,900 of liquidity.
+
+**Method.** Each token is bought once, at the open of the first 15-minute candle after it was detected, and managed with the flow style's exits (15% stop, 20% trailing stop, targets at +30% and +75%, out after an hour) at a 3% round-trip cost. Buy pressure is counted from the real trades in the 120 seconds before detection. Reproduce it with `scripts/research/launch_replay.py`.
+
+| Which launches were bought | Trades | Average result | 95% range of the average | Winning trades |
+|---|---|---|---|---|
+| Every launch | 9,226 | -4.6% | -5.5% to -3.4% | 20% |
+| Strong buy pressure (15+ buyers and $1,500+ net in 120 seconds) | 1,701 | -7.4% | -9.1% to -5.4% | 14% |
+| Small (market cap under $13,000) | 5,346 | -6.7% | -7.5% to -6.0% | 16% |
+| Larger (market cap $28,000+ and liquidity $13,000+) | 1,416 | -0.8% | -2.1% to +0.8% | 30% |
+| Larger, with net selling in the last 120 seconds | 829 | +2.1% | -0.1% to +4.2% | 36% |
+
+The median trade in every row was -17.5%: stopped out.
+
+What this says:
+
+- **Chasing buy pressure loses.** The more wallets and money piled in during the last two minutes, the worse the next hour was. This matches the pump-and-dump research, where only buyers in the first 20 to 30 seconds profit [F4]. By the time a burst is visible, it is late.
+- **Size is the one filter that held up.** Small launches lost about 7% a trade in both halves of the sample. Larger ones were close to break-even. That is why `flow` now skips coins under 200 SOL of market cap (`minMcapSol`, about $28,000 at the time of the sample) and risks half as much per trade as the other styles.
+- **Nothing was reliably profitable.** We split the sample by date. "Larger" launches made +1.3% in the first 60% and lost 3.3% in the last 40%. "Larger, bought on a pullback" made +5.3% then lost 1.6%. Neither result survives the split, so neither is a default.
+- **Costs decide it.** For larger launches with wider exits, the average was +1.6% at a 1% round trip, -0.5% at 3%, -3.6% at 6% and -7.7% at 10%. Whatever fee your own launchpad charges agents is, on this evidence, the biggest single lever on whether they can make money.
+- **Holding is worse than any rule.** Buying every launch and holding lost 6% after an hour, 10% after six and 16% after a day.
+
+Limits: the dataset only sees tokens that lived long enough to be detected, so real launches are worse than this. Entry is up to 15 minutes after detection, which cannot show what an agent entering within seconds would get. Candles are 15 minutes wide, and we assume stops fill before targets inside one. It is 20 days of one market. The dataset's author shelved their own trading model because its live results were not good enough.
 
 ## The shared risk layer
 
@@ -57,7 +90,7 @@ The liquidity paradox is the main fact here: the edge exists where costs are hig
 - The base rates are hostile. 0.63% of 655,770 pump.fun tokens graduated, and 92% of tokens with at least 30 swaps had a dump [F5]. 98.6% of pump.fun tokens fell under $1,000 of liquidity [F6]. 73% of graduated launches fell below 40% of their migration price within 20 minutes [F7].
 - Concentration and fake demand predict collapse: bundled wallets held 36.5% of supply at migration and 21.4% of pre-migration transactions were wash trades [F7].
 
-The `buy_pressure` signal this style follows is tuned under `signals` in the config. The research suggests asking for more than the current defaults before trusting it: about 15 distinct buyers and 10 SOL net in 120 seconds, on a coin with at least 100 holders and 50 SOL in the pool. Those numbers are judgment informed by [F5][F7], and the holder and pool checks are not built yet. Every flow threshold on this page is untested against real wallet data.
+The `buy_pressure` signal this style follows is tuned under `signals` in the config. Our own replay of 9,226 launches (above) contradicts the idea that a stronger signal is a better entry: stronger bursts did worse. Treat `flow` as the style for agents whose persona is to chase launches, sized small, and not as an edge. The research also points to checks that are not built yet: holder count, pool liquidity and bundled or shared-funder wallets [F5][F7].
 
 ### accumulate
 
@@ -127,7 +160,7 @@ Trend roughly kept its capital while the median coin lost 84%. Accumulate's larg
 - **Not Solana DEX data.** These are centralized-exchange prices in USDT. On-chain pools have wider costs, worse fills on size and failed transactions. No pump.fun-size token is in the sample.
 - **Survivorship.** The dataset holds coins still listed when it was built. Dead coins are missing, which flatters every result, buy and hold most of all.
 - **One month.** The 1-minute sample is a single falling month. It says little about how the styles behave in a rising one.
-- **Flow is not tested.** Candles carry no wallets, so the backtest stands in a volume spike on an up candle for buy pressure. That proxy is not the real signal and its row above should be read as a check that the cost gate and exits work, nothing more.
+- **Flow on candles is a proxy.** Candles carry no wallets, so this backtest stands in a volume spike on an up candle for buy pressure. The real test of flow is the fresh-launch replay near the top of this page.
 - **Fills are idealised.** Paper fills happen at the candle's close with fixed slippage. Stops are checked once per candle, so a gap through a stop is filled at the close.
 - **Bar length was chosen on this data.** We picked it on one half of the coins and report the other half, but both halves are the same month.
 

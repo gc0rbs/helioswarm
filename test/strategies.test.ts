@@ -185,7 +185,7 @@ describe("reversion", () => {
 });
 
 describe("flow", () => {
-  const cfg = strat("flow", { edgeX: 0, maxHoldBars: 0, tp1Pct: 10, tp2Pct: 30, trailPct: 20 });
+  const cfg = strat("flow", { edgeX: 0, maxHoldBars: 0, tp1Pct: 10, tp2Pct: 30, trailPct: 20, minMcapSol: 0 });
   const pressure = (at: number) => (i: number, board: Board, now: number) => {
     if (i === at) board.post({ mint: MINT, kind: "buy_pressure", severity: "low", score: 0.6, reasons: ["12 wallets bought 9 SOL net"], from: "stream", ts: now, ttlMs: 5 * MIN });
   };
@@ -207,6 +207,16 @@ describe("flow", () => {
   it("skips a signal on a falling price or one that already ran", async () => {
     expect((await run(cfg, [...flat(6), 0.99, 0.98, 0.97, 0.96], { signal: pressure(8) })).actions).toHaveLength(0);
     expect((await run(cfg, [...flat(6), 1.2, 1.4, 1.6, 1.7], { signal: pressure(8) })).actions).toHaveLength(0);
+  });
+
+  it("skips coins under its market-cap floor", async () => {
+    // Price 1 SOL x 1 billion tokens is far above the floor; the same shape at 1e-7 SOL is a 100 SOL coin.
+    const tiny = [...flat(6), 1.01, 1.02, 1.03, 1.15, 1.2].map((x) => x * 1e-7);
+    const floor = strat("flow", { edgeX: 0, minMcapSol: 200 });
+    expect((await run(floor, tiny, { signal: pressure(8) })).actions).toHaveLength(0);
+    expect((await run(strat("flow", { edgeX: 0, minMcapSol: 50 }), tiny, { signal: pressure(8) })).actions[0]).toMatchObject({ kind: "buy" });
+    expect(defaultStrategy("flow").params.minMcapSol).toBe(200);
+    expect(defaultStrategy("trend").params.minMcapSol).toBe(0);
   });
 
   it("leaves when the stream flags selling", async () => {
