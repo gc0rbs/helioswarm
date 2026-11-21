@@ -2,6 +2,7 @@
 //      pnpm start -- --config swarm.json --wallets   (create missing agent wallets, list addresses and balances)
 //      pnpm start -- --config swarm.json --watch     (stream on-chain flows and signals only, no trading)
 //      pnpm start -- --roster        (list deployable roster agents)
+//      pnpm start -- --config swarm.json --mint      (serve the mint page and API; needs a "mint" section)
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -22,6 +23,12 @@ import { expandGroups, loadRoster } from "./roster";
 import { Swarm } from "./swarm";
 import { JupiterVenue, PaperVenue } from "./venues";
 import { ensureWallets, loadWallets, solBalances, walletPath } from "./wallets";
+import { loadMintConfig } from "./mint/config";
+import { expandWithMinted, setXPoster } from "./mint/deploy";
+import { httpRpc } from "./mint/pay";
+import { startMintServer } from "./mint/server";
+import { MintService } from "./mint/service";
+import { MintStore } from "./mint/store";
 import type { KeyPairSigner } from "@solana/kit";
 
 /** Shows paths under the home folder as ~/... so the username is not printed. */
@@ -134,9 +141,27 @@ async function main() {
   const path = resolve(arg("config") ?? "swarm.json");
   const cfg = loadConfig(path);
   for (const p of cfg.plugins) await import(pathToFileURL(resolve(dirname(path), p)).href);
-  const specs = expandGroups(cfg.groups);
+  // With a "mint" section, every minted agent is deployed after the config's own groups.
+  const mintCfg = loadMintConfig(path);
+  const mintStore = mintCfg ? new MintStore(resolve(dirname(path), mintCfg.dataDir)) : null;
+  const specs = mintCfg ? expandWithMinted(cfg.groups, mintCfg, mintStore!.agents(), liveArmed(cfg) ? "live" : "paper") : expandGroups(cfg.groups);
   const walletsDir = resolve(dirname(path), cfg.walletsDir);
   const rpcUrl = cfg.live.rpcUrl ?? process.env.SOLANA_RPC_URL;
+
+  if (process.argv.includes("--mint")) {
+    if (!mintCfg) throw new Error('--mint needs a "mint" section in the config');
+    if (!rpcUrl) throw new Error("--mint needs SOLANA_RPC_URL (or live.rpcUrl in the config) to check payments");
+    const svc = new MintService({ cfg: mintCfg, store: mintStore!, rpc: httpRpc(rpcUrl), reservedNames: loadRoster().map((r) => r.name) });
+    const noX = svc.xUnavailable();
+    if (noX) console.warn(`[mint] ${noX}; minting works without it.`);
+    const server = startMintServer(svc, process.env.PORT ? Number(process.env.PORT) : mintCfg.port);
+    await new Promise<void>((done) => {
+      process.once("SIGINT", done);
+      process.once("SIGTERM", done);
+    });
+    server.close();
+    return;
+  }
 
   if (process.argv.includes("--fund") || process.argv.includes("--sweep")) {
     if (!rpcUrl) throw new Error("--fund and --sweep need SOLANA_RPC_URL (or live.rpcUrl in the config)");
@@ -293,6 +318,13 @@ async function main() {
       swarm.log("wallet", { agent: s.id, address: wallets.get(s.id)!.address, balanceSol: bal, tradableSol: cash, file: walletPath(walletsDir, s.id) });
       if (cash <= 0) console.warn(`[swarm] ${s.id} has ${bal} SOL in ${wallets.get(s.id)!.address}: below the fee reserve, it will not buy.`);
     }
+  }
+  if (mintCfg?.x.post) {
+    // Agents with a linked X account post their own reports through the mint's stored tokens.
+    const svc = new MintService({ cfg: mintCfg, store: mintStore!, rpc: httpRpc(rpcUrl ?? "http://127.0.0.1:8899") });
+    const noX = svc.xUnavailable();
+    if (noX) console.warn(`[swarm] ${noX}: xpost will only log.`);
+    else setXPoster((id, text) => svc.xPostAs(id, text));
   }
   let stopStream = () => {};
   if (cfg.stream) {
